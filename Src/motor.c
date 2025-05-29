@@ -81,12 +81,12 @@ void set_motor_A(int32_t speed) {
     if (speed < -1000) speed = -1000;
 
     if (speed >= 0) {
-    	GPIOA -> BSRR = GPIO_PIN_0;
-    	GPIOA -> BRR = GPIO_PIN_1;
-    	//LPUART_print("Made it1");
-    } else {
     	GPIOA -> BRR = GPIO_PIN_0;
     	GPIOA -> BSRR = GPIO_PIN_1;
+    	//LPUART_print("Made it1");
+    } else {
+    	GPIOA -> BSRR = GPIO_PIN_0;
+    	GPIOA -> BRR = GPIO_PIN_1;
         speed = -speed;
         //LPUART_print("Made it2");
     }
@@ -98,12 +98,12 @@ void set_motor_B(int32_t speed) {
     if (speed < -1000) speed = -1000;
 
     if (speed >= 0) {
-    	GPIOB -> BSRR = GPIO_PIN_0;
-    	GPIOB -> BRR = GPIO_PIN_1;
-    	//LPUART_print("Made it3");
-    } else {
     	GPIOB -> BRR = GPIO_PIN_0;
     	GPIOB -> BSRR = GPIO_PIN_1;
+    	//LPUART_print("Made it3");
+    } else {
+    	GPIOB -> BSRR = GPIO_PIN_0;
+    	GPIOB -> BRR = GPIO_PIN_1;
     	//LPUART_print("Made it4");
         speed = -speed;
     }
