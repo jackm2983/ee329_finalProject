@@ -21,10 +21,6 @@ int tick = 0;
 
 void SystemClock_Config(void);
 
-#define KP 15   // proportional gain
-#define KD 1    // derivative gain
-#define KI 0    // optional, start with 0
-
 int32_t prev_error = 0;
 int32_t integral = 0;
 
@@ -50,7 +46,9 @@ int main(void)
     LPUART_ESC_Print("2J", "");
     LPUART_ESC_Print("H", "");
 
+
     while (1) {
+
         // Gyro: angular rate in °/s × 100
         int16_t gyro_raw = Read_Gyro_Y() - gyro_bias;
         int32_t rate100 = (int32_t)gyro_raw * 100 / 131;
@@ -65,53 +63,130 @@ int main(void)
         // Complementary filter
         angle100 = (ALPHA * (angle100 + gyro_delta) + ONE_MINUS_ALPHA * accel_angle100) / 100;
 
-//        // tilt limit
-//        if (abs(angle100) > 4000) {  // 40°
-//            set_motor_speed(0);      // shut down motors
-//            continue;                // skip rest of loop
-//        }
 
-        // --- PID Control ---
-        int32_t error = 0 - angle100; // Target is 0
-        integral += error;
-        int32_t derivative = error - prev_error;
-        prev_error = error;
 
-        if (integral > 5000) integral = 5000;
-        if (integral < -5000) integral = -5000;
 
-        // PID output
-        int32_t output = KP * error + KD * derivative + KI * integral;
+        // === PID CONTROL BLOCK ===
+		static int32_t prev_cmd = 0;
+		int32_t error = -angle100;
+		int32_t error_deg = error / 100;  // Convert to degrees (was /10, too sensitive)
+		int32_t rate_deg = rate100 / 100;
 
-        if (output > 50000) {
-            output = 1000;
-        } else if (output < -50000) {
-            output = -1000;
-        } else {
-            output = (output * 1000) / 50000;
-        }
+		// === Balanced Gains ===
+		#define KP_BASE 8            // Higher base P gain for response
+		#define KP_MAX 18            // Reasonable max P gain
+		#define KD_BASE 2            // Base D gain
+		#define KD_MAX 12            // Reasonable max D gain
+		#define KI 0                 // Start with no integral term
+		#define ANGLE_RAMP_START 50  // Start ramping after 0.5°
+		#define ANGLE_RAMP_END 300   // Full gain past 3°
+		#define RATE_LIMIT 500       // Reasonable rate limit
+		#define MAX_OUT 60           // Higher max output
+		#define MAX_ACCEL 15         // Faster acceleration limit
+		#define DEADBAND 30          // Don't respond to tiny angles
 
-        set_motor_speed(output);
+		// === Deadband - ignore very small angles ===
+		int32_t abs_angle = abs(error);
+		if (abs_angle < DEADBAND) {
+			error = 0;
+			error_deg = 0;
+		}
+
+		// === Progressive P gain (starts low, ramps up) ===
+		int32_t kp;
+		if (abs_angle < ANGLE_RAMP_START) {
+			kp = KP_BASE;
+		} else if (abs_angle < ANGLE_RAMP_END) {
+			int32_t ramp_progress = abs_angle - ANGLE_RAMP_START;
+			int32_t ramp_range = ANGLE_RAMP_END - ANGLE_RAMP_START;
+			kp = KP_BASE + ((KP_MAX - KP_BASE) * ramp_progress) / ramp_range;
+		} else {
+			kp = KP_MAX;
+		}
+
+		// === Progressive D gain (lower when upright) ===
+		int32_t kd;
+		if (abs_angle < 100) {  // Within 1 degree
+			kd = KD_BASE;
+		} else {
+			kd = KD_BASE + ((KD_MAX - KD_BASE) * abs_angle) / 500; // Gradual ramp
+		}
+
+		// Clamp rate for sanity
+		if (rate100 > RATE_LIMIT * 100) rate100 = RATE_LIMIT * 100;
+		else if (rate100 < -RATE_LIMIT * 100) rate100 = -RATE_LIMIT * 100;
+
+		// === Terms ===
+		int32_t p_term = (kp * error_deg) / 5;   // Less scaling for more response
+		int32_t d_term = -(kd * rate_deg) / 8;   // Less scaling for more damping
+
+		// Simple integral term (optional, start with 0)
+		integral += error_deg;
+		if (integral > 1000) integral = 1000;
+		else if (integral < -1000) integral = -1000;
+		int32_t i_term = (KI * integral) / 100;
+
+		// === Combine ===
+		int32_t cmd = p_term + d_term + i_term;
+
+		// Clamp output to much lower values
+		if (cmd > MAX_OUT) cmd = MAX_OUT;
+		else if (cmd < -MAX_OUT) cmd = -MAX_OUT;
+
+		// Much gentler slew rate limit
+		if (cmd > prev_cmd + MAX_ACCEL) cmd = prev_cmd + MAX_ACCEL;
+		else if (cmd < prev_cmd - MAX_ACCEL) cmd = prev_cmd - MAX_ACCEL;
+
+		prev_cmd = cmd;
+
+		// Keep motor scaling reasonable
+		set_motor_speed(cmd * 0.8);  // Less conservative scaling
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
          //print to lpuart
         tick++;
-        if (tick >= 20) {  // every 10 * 20ms = 200ms
+        if (tick >= 20) {  // every 200ms
             tick = 0;
-            int32_t whole = angle100 / 100;
-            int32_t frac  = abs(angle100 % 100);
-            snprintf(buf, sizeof(buf), "Angle: %4ld.%02ld deg\r\n", whole, frac);
-            LPUART_ESC_Print("2J", "");
-            LPUART_ESC_Print("H", "");
+
+            LPUART_ESC_Print("2J", "");  // clear screen
+            LPUART_ESC_Print("H", "");   // cursor home
+
+            // Print all relevant state info
+            snprintf(buf, sizeof(buf),
+                "angle100: %ld\r\nrate100: %ld\r\naccel_angle100: %ld\r\ngyro_delta: %ld\r\n"
+                "P: %ld  D: %ld\r\n",
+                angle100, rate100, accel_angle100, gyro_delta,
+                p_term, d_term
+            );
             LPUART_print(buf);
 
+            // Optional balance window detection
+            if (abs(angle100) < 100 && abs(rate100) < 100) {
+                LPUART_print(">> IN BALANCE WINDOW <<\r\n");
+            }
 
-            char out_buf[32];
-			snprintf(out_buf, sizeof(out_buf), "Output: %ld\r\n", output);
-			LPUART_ESC_Print("H", "");
-			LPUART_print(out_buf);
         }
 
-        delay_us(DT_MS * 1000);
+
+
+
+        delay_us(DT_MS * 100);
     }
 
 }

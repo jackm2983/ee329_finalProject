@@ -72,8 +72,8 @@ void set_motor_speed(int32_t speed) {
 //	LPUART_ESC_Print("H", "");
 //	LPUART_print(out_buf);
 
-    set_motor_A(speed*1.1);
-    set_motor_B(speed*0.5);
+    set_motor_A(speed*2);
+    set_motor_B(speed*1.5);
 }
 
 void set_motor_A(int32_t speed) {
